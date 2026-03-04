@@ -1,0 +1,9 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Logs
+logs/
+
+# Checkpoints
+*.pt

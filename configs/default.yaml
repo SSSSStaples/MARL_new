@@ -1,0 +1,30 @@
+env:
+  max_steps: 200
+  station_positions:
+    X: [1.0, 5.0]
+    Y: [5.0, 5.0]
+    Z: [9.0, 5.0]
+  mover_speed: 0.2
+  pickup_radius: 0.5
+  drop_radius: 0.5
+  manufacturing_time: 5
+
+reward:
+  task_complete: 50.0
+  time_penalty: -0.1
+  collision_penalty: -10.0
+  distance_shaping: 0.5
+
+training:
+  total_timesteps: 20000
+  n_steps: 2048
+  batch_size: 64
+  learning_rate: 3e-4
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  update_epochs: 4
+  ent_coef: 0.01
+  vf_coef: 1.0
+  max_grad_norm: 0.5
+  save_freq: 5000
