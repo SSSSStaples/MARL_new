@@ -19,6 +19,12 @@ class Station:
 
     def remove_item(self):
         return self.queue.pop(0) if self.queue else None
+
+    def remove_first_product(self):
+        for i, item in enumerate(self.queue):
+            if isinstance(item, Product):
+                return self.queue.pop(i)
+        return None
  
     def queue_length(self):
         return len(self.queue)

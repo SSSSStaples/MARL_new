@@ -3,6 +3,7 @@ from gymnasium import spaces
 import numpy as np
 import yaml
 from .station_objects import Station, Material, Product
+from .reward import RewardCalculator
 
 
 class FactoryEnv(gym.Env):
@@ -39,12 +40,16 @@ class FactoryEnv(gym.Env):
         self.pickup_radius = float(env_cfg.get("pickup_radius", 0.5))
         self.drop_radius = float(env_cfg.get("drop_radius", 0.5))
         self.manufacturing_time_required = int(env_cfg.get("manufacturing_time", 5))
+        bounds = env_cfg.get("bounds", {"xmin": 0.0, "ymin": 0.0, "xmax": 15.0, "ymax": 15.0})
+        self.bounds = {
+            "xmin": float(bounds.get("xmin", 0.0)),
+            "ymin": float(bounds.get("ymin", 0.0)),
+            "xmax": float(bounds.get("xmax", 15.0)),
+            "ymax": float(bounds.get("ymax", 15.0)),
+        }
 
-        # reward params
-        self.r_task = float(reward_cfg.get("task_complete", 50.0))
-        self.r_time = float(reward_cfg.get("time_penalty", -0.1))
-        self.r_collision = float(reward_cfg.get("collision_penalty", -10.0))
-        self.r_distance = float(reward_cfg.get("distance_shaping", 0.5))
+        # reward calculator
+        self.rewarder = RewardCalculator(reward_cfg)
 
         # Stations
         self.station_X = Station("X", self.station_positions["X"])
@@ -124,16 +129,18 @@ class FactoryEnv(gym.Env):
         """
 
         self.step_count += 1
-        rewards = {a: 0.0 for a in self.agent_ids}
+        events = {}
         infos = {a: {} for a in self.agent_ids}
 
         # --- Apply mover_1 action ---
         a1 = int(action_dict.get("mover_1", 0))
         # mover1 handles X <-> Y
         if a1 == 1:
-            self._move_towards(self.mover1_pos, np.array(self.station_positions["X"]))
+            if self._move_towards(self.mover1_pos, np.array(self.station_positions["X"])):
+                events["mover1_out_of_bounds"] = True
         elif a1 == 2:
-            self._move_towards(self.mover1_pos, np.array(self.station_positions["Y"]))
+            if self._move_towards(self.mover1_pos, np.array(self.station_positions["Y"])):
+                events["mover1_out_of_bounds"] = True
         elif a1 == 3:  # pick at X
             if self._near(self.mover1_pos, np.array(self.station_positions["X"])):
                 if self.mover1_carry is None:
@@ -146,25 +153,29 @@ class FactoryEnv(gym.Env):
                     self.station_Y.add_item(self.mover1_carry)
                     # if machine needs, satisfy it by marking need flag false (machine will pick later)
                     self.mover1_carry = None
-                    rewards["mover_1"] += self.r_task * 0.5  # partial reward for delivering to Y
+                    self.machine_need_material = False
+                    events["mover1_deliver_to_Y"] = True
 
         # shaping: reward closer to target
         # if mover1 moving to Y give small shaping based on distance to Y when action 2
         if a1 == 2:
             dist = np.linalg.norm(self.mover1_pos - np.array(self.station_positions["Y"]))
-            rewards["mover_1"] += max(0, (1.0 - dist / (np.linalg.norm(np.array(self.station_positions["Y"]) - np.array(self.station_positions["X"]))))) * self.r_distance * 0.01
+            max_dist = np.linalg.norm(np.array(self.station_positions["Y"]) - np.array(self.station_positions["X"]))
+            events["mover1_to_Y_progress"] = 1.0 - dist / max_dist if max_dist > 1e-6 else 0.0
 
         # --- Apply mover_2 action ---
         a2 = int(action_dict.get("mover_2", 0))
         # mover2 handles Y <-> Z
         if a2 == 1:
-            self._move_towards(self.mover2_pos, np.array(self.station_positions["Y"]))
+            if self._move_towards(self.mover2_pos, np.array(self.station_positions["Y"])):
+                events["mover2_out_of_bounds"] = True
         elif a2 == 2:
-            self._move_towards(self.mover2_pos, np.array(self.station_positions["Z"]))
+            if self._move_towards(self.mover2_pos, np.array(self.station_positions["Z"])):
+                events["mover2_out_of_bounds"] = True
         elif a2 == 3:  # pick at Y
             if self._near(self.mover2_pos, np.array(self.station_positions["Y"])):
                 if self.mover2_carry is None:
-                    item = self.station_Y.remove_item()
+                    item = self.station_Y.remove_first_product()
                     if item is not None:
                         self.mover2_carry = item
         elif a2 == 4:  # drop at Z
@@ -173,7 +184,7 @@ class FactoryEnv(gym.Env):
                     # delivering to Z means finished product accepted (we'll count throughput if product)
                     if isinstance(self.mover2_carry, Product):
                         self.total_throughput += 1
-                        rewards["mover_2"] += self.r_task
+                        events["mover2_deliver_product_to_Z"] = True
                         # global reward will also be added below
                         self.station_Z.add_item(self.mover2_carry)
                         self.mover2_carry = None
@@ -181,12 +192,13 @@ class FactoryEnv(gym.Env):
                         # dropping raw material at Z (not ideal) - small negative
                         self.station_Z.add_item(self.mover2_carry)
                         self.mover2_carry = None
-                        rewards["mover_2"] += -1.0
+                        events["mover2_drop_raw_to_Z"] = True
 
         # small shaping reward
         if a2 == 2:
             dist = np.linalg.norm(self.mover2_pos - np.array(self.station_positions["Z"]))
-            rewards["mover_2"] += max(0, (1.0 - dist / (np.linalg.norm(np.array(self.station_positions["Z"]) - np.array(self.station_positions["Y"]))))) * self.r_distance * 0.01
+            max_dist = np.linalg.norm(np.array(self.station_positions["Z"]) - np.array(self.station_positions["Y"]))
+            events["mover2_to_Z_progress"] = 1.0 - dist / max_dist if max_dist > 1e-6 else 0.0
 
         # --- Apply manuf_1 action ---
         a3 = int(action_dict.get("manuf_1", 0))
@@ -205,7 +217,7 @@ class FactoryEnv(gym.Env):
                     self.machine_timer = self.manufacturing_time_required
                     self.machine_need_material = False
                     # small local reward for starting processing
-                    rewards["manuf_1"] += 1.0
+                    events["manuf_started"] = True
 
         # --- Manufacturing progression (time-based) ---
         if self.machine_busy:
@@ -217,11 +229,10 @@ class FactoryEnv(gym.Env):
                 self.machine_busy = False
                 self.machine_current_material = None
                 # when product produced, small reward assigned (global throughput counted when delivered to Z)
-                rewards["manuf_1"] += 2.0
+                events["manuf_finished"] = True
 
-        # --- time penalty applied to all agents ---
-        for a in self.agent_ids:
-            rewards[a] += self.r_time
+        # --- reward calculation ---
+        rewards = self.rewarder.compute(self.agent_ids, events)
 
         # --- global reward (throughput) shaping: small shared reward when product delivered to Z this step ---
         global_reward = 0.0
@@ -236,7 +247,7 @@ class FactoryEnv(gym.Env):
 
         obs = self._get_obs_dict()
 
-        infos.update({"global_throughput": self.total_throughput})
+        infos = {"global_throughput": self.total_throughput}
 
         return obs, rewards, dones, infos
 
@@ -252,6 +263,11 @@ class FactoryEnv(gym.Env):
             if np.linalg.norm(step) > dist:
                 step = direction
             pos += step
+        # clamp to bounds
+        before = pos.copy()
+        pos[0] = min(max(pos[0], self.bounds["xmin"]), self.bounds["xmax"])
+        pos[1] = min(max(pos[1], self.bounds["ymin"]), self.bounds["ymax"])
+        return not np.allclose(before, pos)
 
     def _near(self, pos, target):
         return np.linalg.norm(pos - target) <= self.pickup_radius

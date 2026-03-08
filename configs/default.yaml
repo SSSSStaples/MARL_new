@@ -1,9 +1,14 @@
 env:
   max_steps: 200
   station_positions:
-    X: [1.0, 5.0]
+    X: [1.0, 1.0]
     Y: [5.0, 5.0]
-    Z: [9.0, 5.0]
+    Z: [9.0, 1.0]
+  bounds:
+    xmin: 0.0
+    ymin: 0.0
+    xmax: 15.0
+    ymax: 15.0
   mover_speed: 0.2
   pickup_radius: 0.5
   drop_radius: 0.5
@@ -13,6 +18,7 @@ reward:
   task_complete: 50.0
   time_penalty: -0.1
   collision_penalty: -10.0
+  out_of_bounds_penalty: -5.0
   distance_shaping: 0.5
 
 training:
