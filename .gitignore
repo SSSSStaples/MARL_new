@@ -1,9 +1,34 @@
 # Python cache
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 
 # Logs
 logs/
 
 # Checkpoints
 *.pt
+*.pth
+*.ckpt
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Temp
+.tmp/
+tmp/
+
+# TensorBoard
+events.out.tfevents.*
+
+# Large research artifacts (keep out of git; use LFS or separate storage if needed)
+paper/
