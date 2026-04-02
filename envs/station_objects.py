@@ -32,6 +32,13 @@ class Order:
         self.precision_req = float(precision_req)
         self.step_idx = 0
         self.finished = False
+        # Environment step when the order first became finished (set by env logic).
+        # Used for "handoff alert" / waiting-age features in observations.
+        self.finished_step = None
+        # Handoff protocol state (finished order -> AGV pickup/delivery).
+        self.handoff_requested = False
+        self.reserved_by = None
+        self.reserved_until = None
         # For the "Starter" architecture pipeline:
         #   raw (at X) -> component (after manufacturing at Y) -> done (stored at Z)
         self.stage = "raw"
