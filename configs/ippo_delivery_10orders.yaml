@@ -1,11 +1,19 @@
 env:
-  max_steps: 800
+  # Roughly double horizon for ~2x orders (5 -> 10).
+  max_steps: 1600
   agv_count: 2
   agv_speed: 0.8
   pickup_radius: 1.0
   drop_radius: 1.0
   # Delivery requires an explicit DROP action at SINK (no auto-deliver shortcut).
   auto_deliver_at_sink: false
+  # Training aid: once an AGV reaches SINK while carrying a finished order, force DROP.
+  force_drop_at_sink: true
+  # Training aid: if an empty AGV is at a station with an unclaimed finished handoff, force PICK.
+  force_pick_finished_handoff: true
+  # Training aid: keep the WIP pipeline moving (force PICK at stations, force DROP when valid).
+  force_pick_at_station: true
+  force_drop_when_valid: true
   render_pause_s: 0.001
   boundary_margin: 0.0
   collision_radius: 0.0
@@ -30,7 +38,9 @@ env:
     neighbor_normalize: true
     include_target_vector: true
     target_normalize: true
-    include_machine_timer: false
+    # Handoff alert board for AGVs: shows where finished orders are waiting and how long they've waited.
+    include_handoff_alert: true
+    handoff_include_age: true
   station_positions:
     SRC: [1.0, 1.0]
     TURNING: [4.0, 4.0]
@@ -50,36 +60,43 @@ env:
     Drilling: 10
 
 reward:
-  task_complete: 120.0
+  # Delivery reward is local to delivering AGV (easier credit assignment).
+  global_task_complete: false
+  task_complete: 250.0
+
   time_penalty: -0.02
-  time_penalty_mode: per_agent
-  global_task_complete: true
+  time_penalty_mode: shared
+
   out_of_bounds_penalty: -5.0
   wrong_drop_penalty: -1.0
   pick_failed_penalty: -0.2
   drop_failed_penalty: -0.2
-  pick_reward: 2.0
-  pick_finished_reward: 6.0
-  correct_drop_reward: 3.0
-  machine_start_reward: 1.0
-  machine_complete_reward: 1.0
-  machine_order_advance_reward: 0.2
-  machine_order_finish_reward: 40.0
-  machine_select_failed_penalty: -0.05
-  global_machine_start_reward: 0.01
-  global_machine_complete_reward: 0.02
-  global_machine_order_advance_reward: 0.005
-  global_machine_order_finish_reward: 0.05
-  finished_wait_penalty_per_step: -0.15
-  finished_carried_penalty_per_step: -0.08
+  pick_reward: 0.5
+  pick_finished_reward: 30.0
+  handoff_claimed_reward: 20.0
+  correct_drop_reward: 1.0
+
+  machine_start_reward: 0.2
+  machine_complete_reward: 0.2
+  machine_order_advance_reward: 2.0
+  machine_order_finish_reward: 20.0
+  machine_select_failed_penalty: -0.2
+
+  global_machine_order_finish_reward: 0.2
+
+  finished_wait_penalty_per_step: -0.6
+  finished_carried_penalty_per_step: -0.05
   finished_penalty_mode: agv
+
   late_penalty_per_step: -0.2
   early_bonus_per_step: 0.05
   on_time_bonus: 2.0
+
   collision_penalty: -2.0
   global_collision_penalty: 0.0
+
   distance_shaping_mode: signed
-  distance_reward_weight: 0.2
+  distance_reward_weight: 2.0
   boundary_shaping_weight: 0.0
 
 jobs:
@@ -100,6 +117,7 @@ jobs:
     material: Bar
     route: [Milling, Drilling]
 
+# 10 orders (tasks).
 orders:
   - id: 1
     job_type: P1
@@ -119,16 +137,41 @@ orders:
   - id: 4
     job_type: P4
     arrival: 100
-    due: 230
+    due: 250
     process_times: [38, 10]
   - id: 5
     job_type: P1
     arrival: 130
-    due: 260
+    due: 280
     process_times: [47, 15]
+  - id: 6
+    job_type: P2
+    arrival: 160
+    due: 320
+    process_times: [30, 12, 18]
+  - id: 7
+    job_type: P3
+    arrival: 200
+    due: 350
+    process_times: [45]
+  - id: 8
+    job_type: P4
+    arrival: 240
+    due: 400
+    process_times: [36, 12]
+  - id: 9
+    job_type: P1
+    arrival: 300
+    due: 460
+    process_times: [40, 16]
+  - id: 10
+    job_type: P2
+    arrival: 360
+    due: 520
+    process_times: [34, 10, 22]
 
 training:
-  total_timesteps: 40000
+  total_timesteps: 160000
   n_steps: 2048
   batch_size: 64
   learning_rate: 3e-4
@@ -137,8 +180,9 @@ training:
   clip_range: 0.2
   update_epochs: 4
   ent_coef: 0.01
-  exploration_eps: 0.05
+  exploration_eps: 0.15
   vf_coef: 1.0
   max_grad_norm: 0.5
-  save_freq: 5000
+  save_freq: 10000
   print_order_matrix: true
+
