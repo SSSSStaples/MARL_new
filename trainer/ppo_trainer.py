@@ -125,6 +125,10 @@ class MAPPOTrainer:
         self.clip_range = float(tcfg.get("clip_range", 0.2))
         self.update_epochs = int(tcfg.get("update_epochs", 10))
         self.ent_coef = float(tcfg.get("ent_coef", 0.01))
+        # Optional epsilon-greedy exploration on top of policy sampling.
+        # Useful for sparse reward / many invalid-action environments.
+        self.exploration_eps = float(tcfg.get("exploration_eps", 0.0))
+        self.use_action_masks = bool(tcfg.get("use_action_masks", True))
         self.vf_coef = float(tcfg.get("vf_coef", 1.0))
         self.max_grad_norm = float(tcfg.get("max_grad_norm", 0.5))
         self.save_freq = int(tcfg.get("save_freq", 50000))
@@ -173,6 +177,12 @@ class MAPPOTrainer:
         action_dict = {}
         logp_dict = {}
         value_inputs = []
+        masks = {}
+        if self.use_action_masks and hasattr(self.env, "get_action_masks"):
+            try:
+                masks = self.env.get_action_masks() or {}
+            except Exception:
+                masks = {}
 
         # build centralized obs vector
         central_obs = np.concatenate([obs_dict[a].astype(np.float32).ravel() for a in self.agent_ids]).astype(np.float32)
@@ -185,9 +195,24 @@ class MAPPOTrainer:
             obs = obs_dict[a]
             obs_t = torch.tensor(obs, dtype=torch.float32, device=DEVICE).unsqueeze(0)
             logits = self.actors[a](obs_t)
+            m = masks.get(a, None)
+            if m is not None:
+                mask_t = torch.tensor(np.asarray(m, dtype=np.float32), dtype=torch.float32, device=DEVICE).unsqueeze(0)
+                logits = logits + (mask_t - 1.0) * 1e9
             dist = Categorical(logits=logits)
-            action = dist.sample().cpu().numpy().item()
-            logp = dist.log_prob(torch.tensor(action, device=DEVICE)).detach().cpu().numpy().item()
+            act_t = dist.sample()
+            action = int(act_t.detach().cpu().numpy().item())
+
+            if self.exploration_eps > 0.0 and np.random.rand() < self.exploration_eps:
+                if m is not None:
+                    valid = np.flatnonzero(np.asarray(m, dtype=np.float32) > 0.5)
+                else:
+                    valid = np.arange(int(logits.shape[-1]), dtype=np.int64)
+                if valid.size > 0:
+                    action = int(np.random.choice(valid))
+                    act_t = torch.tensor([action], dtype=torch.long, device=DEVICE)
+
+            logp = dist.log_prob(act_t).detach().cpu().numpy().item()
             action_dict[a] = int(action)
             logp_dict[a] = float(logp)
         return action_dict, logp_dict, value, central_obs
